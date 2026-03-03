@@ -61,13 +61,35 @@ interface Sale {
 
 // --- Storage Helpers ---
 
+const USER_SCOPED_KEYS = ['products', 'sales', 'upi_id', 'cart', 'lastSaleId'];
+
+const getScopedKey = (key: string) => {
+  if (!USER_SCOPED_KEYS.includes(key)) return key;
+  
+  const currentUserStr = localStorage.getItem('currentUser');
+  if (currentUserStr) {
+    try {
+      const currentUser = JSON.parse(currentUserStr);
+      if (currentUser && currentUser.emailOrPhone) {
+        // Use emailOrPhone as a unique prefix for user data
+        return `user_${currentUser.emailOrPhone}_${key}`;
+      }
+    } catch (e) {
+      // Fallback to original key if parsing fails
+    }
+  }
+  return key;
+};
+
 const storage = {
   get: <T,>(key: string, defaultValue: T): T => {
-    const item = localStorage.getItem(key);
+    const scopedKey = getScopedKey(key);
+    const item = localStorage.getItem(scopedKey);
     return item ? JSON.parse(item) : defaultValue;
   },
   set: (key: string, value: any) => {
-    localStorage.setItem(key, JSON.stringify(value));
+    const scopedKey = getScopedKey(key);
+    localStorage.setItem(scopedKey, JSON.stringify(value));
   }
 };
 
@@ -137,18 +159,34 @@ const LoginPage = () => {
     const users = storage.get<User[]>('users', []);
 
     if (isSignup) {
+      const input = formData.emailOrPhone.trim();
+      const isNumeric = /^\d+$/.test(input);
+
+      // Validation
+      if (isNumeric) {
+        if (input.length !== 10) {
+          setError('Mobile number must be exactly 10 digits');
+          return;
+        }
+      } else {
+        if (!input.toLowerCase().includes('@gmail.com')) {
+          setError('Email must contain @gmail.com');
+          return;
+        }
+      }
+
       if (formData.password !== formData.confirmPassword) {
         setError('Passwords do not match');
         return;
       }
-      if (users.find(u => u.emailOrPhone === formData.emailOrPhone)) {
+      if (users.find(u => u.emailOrPhone === input)) {
         setError('User already exists');
         return;
       }
       
       const newUser = { 
         shopName: formData.shopName, 
-        emailOrPhone: formData.emailOrPhone, 
+        emailOrPhone: input, 
         password: formData.password 
       };
       storage.set('users', [...users, newUser]);
@@ -319,8 +357,11 @@ const ForgotPasswordPage = () => {
 
   const handleSendOtp = (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+
+    const input = email.trim();
     const users = storage.get<User[]>('users', []);
-    const user = users.find(u => u.emailOrPhone === email);
+    const user = users.find(u => u.emailOrPhone === input);
     
     if (user) {
       const code = Math.floor(1000 + Math.random() * 9000).toString();
