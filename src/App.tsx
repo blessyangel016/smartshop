@@ -22,7 +22,9 @@ import {
   User,
   Lock,
   Phone,
-  Store
+  Store,
+  Trash2,
+  Edit2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -543,20 +545,40 @@ const AddUpiPage = () => {
 const AddProductsPage = () => {
   const [formData, setFormData] = useState({ name: '', quantity: '', price: '' });
   const [status, setStatus] = useState('');
+  const [products, setProducts] = useState<Product[]>(storage.get<Product[]>('products', []));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editPrice, setEditPrice] = useState('');
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    const products = storage.get<Product[]>('products', []);
     const newProduct: Product = {
       id: Date.now().toString(),
       name: formData.name,
       quantity: parseInt(formData.quantity),
       price: parseFloat(formData.price)
     };
-    storage.set('products', [...products, newProduct]);
+    const updatedProducts = [...products, newProduct];
+    setProducts(updatedProducts);
+    storage.set('products', updatedProducts);
     setFormData({ name: '', quantity: '', price: '' });
     setStatus('Product Added Successfully!');
     setTimeout(() => setStatus(''), 3000);
+  };
+
+  const handleDelete = (id: string) => {
+    const updatedProducts = products.filter(p => p.id !== id);
+    setProducts(updatedProducts);
+    storage.set('products', updatedProducts);
+  };
+
+  const handleUpdatePrice = (id: string) => {
+    const updatedProducts = products.map(p => 
+      p.id === id ? { ...p, price: parseFloat(editPrice) || 0 } : p
+    );
+    setProducts(updatedProducts);
+    storage.set('products', updatedProducts);
+    setEditingId(null);
+    setEditPrice('');
   };
 
   return (
@@ -617,17 +639,57 @@ const AddProductsPage = () => {
       </div>
 
       <div className="mt-8">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Recent Inventory</h3>
-        <div className="space-y-2">
-          {storage.get<Product[]>('products', []).slice(-3).reverse().map(p => (
-            <div key={p.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex justify-between items-center">
-              <div>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Inventory Management</h3>
+        <div className="space-y-3">
+          {products.slice().reverse().map(p => (
+            <div key={p.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex justify-between items-center group">
+              <div className="flex-1">
                 <p className="font-bold text-slate-800">{p.name}</p>
                 <p className="text-xs text-slate-500">Stock: {p.quantity} units</p>
               </div>
-              <p className="font-bold text-blue-600">₹{p.price}</p>
+              
+              <div className="flex items-center gap-3">
+                {editingId === p.id ? (
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      className="w-20 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      value={editPrice}
+                      onChange={e => setEditPrice(e.target.value)}
+                      autoFocus
+                    />
+                    <button 
+                      onClick={() => handleUpdatePrice(p.id)}
+                      className="text-emerald-500 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors"
+                    >
+                      <CheckCircle2 size={18} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-blue-600">₹{p.price}</p>
+                    <button 
+                      onClick={() => { setEditingId(p.id); setEditPrice(p.price.toString()); }}
+                      className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 p-1.5 rounded-lg transition-colors"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                  </div>
+                )}
+                
+                <button 
+                  onClick={() => handleDelete(p.id)}
+                  className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
           ))}
+          {products.length === 0 && (
+            <p className="text-center text-slate-400 text-sm py-4">No products in inventory</p>
+          )}
         </div>
       </div>
     </Layout>
