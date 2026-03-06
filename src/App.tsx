@@ -24,7 +24,9 @@ import {
   Phone,
   Store,
   Trash2,
-  Edit2
+  Edit2,
+  Book,
+  History
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -59,9 +61,20 @@ interface Sale {
   customerPhone?: string;
 }
 
+interface DuePayment {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  items: CartItem[];
+  total: number;
+  originalTotal: number;
+  date: string;
+  status: 'pending' | 'paid';
+}
+
 // --- Storage Helpers ---
 
-const USER_SCOPED_KEYS = ['products', 'sales', 'upi_id', 'cart', 'lastSaleId'];
+const USER_SCOPED_KEYS = ['products', 'sales', 'upi_id', 'cart', 'lastSaleId', 'due_payments'];
 
 const getScopedKey = (key: string) => {
   if (!USER_SCOPED_KEYS.includes(key)) return key;
@@ -179,8 +192,12 @@ const LoginPage = () => {
         setError('Passwords do not match');
         return;
       }
+      if (users.find(u => u.shopName.toLowerCase() === formData.shopName.toLowerCase())) {
+        setError('Shop name already taken');
+        return;
+      }
       if (users.find(u => u.emailOrPhone === input)) {
-        setError('User already exists');
+        setError('User already exists with this email/phone');
         return;
       }
       
@@ -480,7 +497,8 @@ const HomePage = () => {
   const menuItems = [
     { title: 'Add Products', icon: PlusCircle, path: '/add-products', color: 'bg-blue-500' },
     { title: 'Sell Products', icon: ShoppingCart, path: '/sell', color: 'bg-emerald-500' },
-    { title: 'Monthly Sales', icon: BarChart3, path: '/sales', color: 'bg-orange-500' },
+    { title: 'Sales', icon: BarChart3, path: '/sales', color: 'bg-orange-500' },
+    { title: 'Due Book', icon: Book, path: '/due-book', color: 'bg-red-500' },
     { title: 'Add UPI ID', icon: QrCode, path: '/add-upi', color: 'bg-purple-500' },
   ];
 
@@ -755,6 +773,11 @@ const SellProductsPage = () => {
     if (!selectedProduct) return;
     const qty = parseInt(sellQty);
     
+    if (isNaN(qty) || qty <= 0) {
+      setError('Please enter a valid quantity');
+      return;
+    }
+
     if (qty > selectedProduct.quantity) {
       setError(`Only ${selectedProduct.quantity} in stock!`);
       return;
@@ -839,21 +862,13 @@ const SellProductsPage = () => {
               <div className="space-y-6">
                 <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl">
                   <span className="font-bold text-slate-600">Quantity</span>
-                  <div className="flex items-center gap-4">
-                    <button 
-                      onClick={() => setSellQty(Math.max(1, parseInt(sellQty) - 1).toString())}
-                      className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-600"
-                    >
-                      <Minus size={18} />
-                    </button>
-                    <span className="text-xl font-bold w-8 text-center">{sellQty}</span>
-                    <button 
-                      onClick={() => setSellQty((parseInt(sellQty) + 1).toString())}
-                      className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-600"
-                    >
-                      <Plus size={18} />
-                    </button>
-                  </div>
+                  <input 
+                    type="number"
+                    min="1"
+                    className="w-24 px-4 py-2 bg-white border border-slate-200 rounded-xl text-center font-bold text-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={sellQty}
+                    onChange={e => setSellQty(e.target.value)}
+                  />
                 </div>
 
                 {error && <p className="text-red-500 text-sm font-bold text-center">{error}</p>}
@@ -862,7 +877,7 @@ const SellProductsPage = () => {
                   onClick={addToCart}
                   className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100"
                 >
-                  Add to Cart • ₹{(selectedProduct.price * parseInt(sellQty)).toFixed(2)}
+                  Add to Cart • ₹{(selectedProduct.price * (parseInt(sellQty) || 0)).toFixed(2)}
                 </button>
               </div>
             </motion.div>
@@ -1044,6 +1059,19 @@ const PaymentPage = () => {
             <p className="text-xs text-slate-500">Customer scans QR code</p>
           </div>
         </button>
+
+        <button 
+          onClick={() => navigate('/due-payment')}
+          className={`w-full p-6 rounded-3xl border-2 transition-all flex items-center gap-4 border-slate-100 bg-white`}
+        >
+          <div className={`p-3 rounded-2xl bg-slate-100 text-slate-500`}>
+            <Book size={24} />
+          </div>
+          <div className="text-left">
+            <p className="font-bold text-slate-900">Due Payment</p>
+            <p className="text-xs text-slate-500">Add to customer's due book</p>
+          </div>
+        </button>
       </div>
 
       <AnimatePresence>
@@ -1123,6 +1151,7 @@ const SuccessPage = () => {
 const SendBillPage = () => {
   const navigate = useNavigate();
   const [phone, setPhone] = useState('');
+  const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const lastSaleId = storage.get<string>('lastSaleId', '');
   const sales = storage.get<Sale[]>('sales', []);
@@ -1130,6 +1159,11 @@ const SendBillPage = () => {
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
+    if (phone.length !== 10 || !/^\d+$/.test(phone)) {
+      setError('Mobile number must be exactly 10 digits');
+      return;
+    }
+    setError('');
     if (sale) {
       const updatedSales = sales.map(s => s.id === lastSaleId ? { ...s, customerPhone: phone } : s);
       storage.set('sales', updatedSales);
@@ -1165,10 +1199,13 @@ const SendBillPage = () => {
             <input 
               required
               type="tel" 
-              placeholder="Enter customer phone"
+              placeholder="10 digit mobile number"
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
               value={phone}
-              onChange={e => setPhone(e.target.value)}
+              onChange={e => {
+                setPhone(e.target.value);
+                if (error) setError('');
+              }}
             />
           </div>
 
@@ -1188,6 +1225,8 @@ const SendBillPage = () => {
             </div>
           </div>
 
+          {error && <p className="text-red-500 text-sm font-bold text-center">{error}</p>}
+
           <button type="submit" className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100">
             Send via WhatsApp
           </button>
@@ -1198,25 +1237,61 @@ const SendBillPage = () => {
 };
 
 const SalesPage = () => {
+  const [view, setView] = useState<'monthly' | 'yearly'>('monthly');
   const sales = storage.get<Sale[]>('sales', []);
-  const totalMonthly = sales.reduce((acc, sale) => acc + sale.total, 0);
+  
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  const filteredSales = useMemo(() => {
+    return sales.filter(sale => {
+      const saleDate = new Date(sale.date);
+      if (view === 'monthly') {
+        return saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear;
+      } else {
+        return saleDate.getFullYear() === currentYear;
+      }
+    });
+  }, [sales, view, currentMonth, currentYear]);
+
+  const totalSales = filteredSales.reduce((acc, sale) => acc + sale.total, 0);
 
   return (
-    <Layout title="Monthly Sales">
+    <Layout title="Sales Overview">
+      <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
+        <button 
+          className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${view === 'monthly' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}
+          onClick={() => setView('monthly')}
+        >
+          Monthly
+        </button>
+        <button 
+          className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${view === 'yearly' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}
+          onClick={() => setView('yearly')}
+        >
+          Yearly
+        </button>
+      </div>
+
       <div className="bg-slate-900 p-8 rounded-[2.5rem] text-white mb-8 shadow-xl shadow-slate-200">
-        <p className="text-slate-400 text-sm font-medium mb-1">Total Sales This Month</p>
-        <h2 className="text-4xl font-bold">₹{totalMonthly.toFixed(2)}</h2>
+        <p className="text-slate-400 text-sm font-medium mb-1">
+          Total {view === 'monthly' ? 'Monthly' : 'Yearly'} Sales
+        </p>
+        <h2 className="text-4xl font-bold">₹{totalSales.toFixed(2)}</h2>
         <div className="mt-6 flex items-center gap-2 text-emerald-400 text-sm font-bold">
           <div className="bg-emerald-400/20 p-1 rounded-full">
             <Plus size={14} />
           </div>
-          <span>{sales.length} Transactions</span>
+          <span>{filteredSales.length} Transactions</span>
         </div>
       </div>
 
-      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Recent Transactions</h3>
+      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+        {view === 'monthly' ? 'Monthly' : 'Yearly'} Transactions
+      </h3>
       <div className="space-y-3">
-        {sales.slice().reverse().map(sale => (
+        {filteredSales.slice().reverse().map(sale => (
           <div key={sale.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
             <div className="flex justify-between items-start mb-3">
               <div>
@@ -1254,6 +1329,389 @@ const SalesPage = () => {
   );
 };
 
+const DuePaymentPage = () => {
+  const navigate = useNavigate();
+  const [formData, setFormData] = useState({ name: '', phone: '' });
+  const [error, setError] = useState('');
+  const [sent, setSent] = useState(false);
+  const cart = storage.get<CartItem[]>('cart', []);
+  const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+
+  const handleSendBill = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (formData.phone.length !== 10 || !/^\d+$/.test(formData.phone)) {
+      setError('Mobile number must be exactly 10 digits');
+      return;
+    }
+    setSent(true);
+  };
+
+  const addToDueBook = () => {
+    const duePayments = storage.get<DuePayment[]>('due_payments', []);
+    const newDue: DuePayment = {
+      id: Date.now().toString(),
+      customerName: formData.name,
+      customerPhone: formData.phone,
+      items: cart,
+      total: total,
+      originalTotal: total,
+      date: new Date().toISOString(),
+      status: 'pending'
+    };
+
+    // Update stock
+    const products = storage.get<Product[]>('products', []);
+    const updatedProducts = products.map(p => {
+      const cartItem = cart.find(item => item.productId === p.id);
+      return cartItem ? { ...p, quantity: p.quantity - cartItem.quantity } : p;
+    });
+
+    storage.set('products', updatedProducts);
+    storage.set('due_payments', [...duePayments, newDue]);
+    storage.set('cart', []);
+    navigate('/due-book');
+  };
+
+  if (sent) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+        <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-6">
+          <Send size={32} />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 mb-2">Bill Sent!</h2>
+        <p className="text-slate-500 mb-10">Digital bill sent to <span className="font-bold text-slate-900">{formData.phone}</span></p>
+        <button 
+          onClick={addToDueBook}
+          className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100"
+        >
+          Add due payment to due book
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <Layout title="Due Payment">
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+        <h3 className="text-lg font-bold text-slate-900 mb-4">Customer Details</h3>
+        <form onSubmit={handleSendBill} className="space-y-6">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer Name</label>
+            <input 
+              required
+              type="text" 
+              placeholder="Enter customer name"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+              value={formData.name}
+              onChange={e => setFormData({...formData, name: e.target.value})}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mobile Number</label>
+            <input 
+              required
+              type="tel" 
+              placeholder="10 digit mobile number"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+              value={formData.phone}
+              onChange={e => setFormData({...formData, phone: e.target.value})}
+            />
+          </div>
+
+          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Bill Summary</p>
+            <div className="space-y-2">
+              {cart.map((item, idx) => (
+                <div key={idx} className="flex justify-between text-sm">
+                  <span className="text-slate-600">{item.name} x {item.quantity}</span>
+                  <span className="font-bold text-slate-900">₹{(item.price * item.quantity).toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="pt-2 mt-2 border-t border-slate-200 flex justify-between font-bold text-lg">
+                <span>Total Due</span>
+                <span className="text-red-600">₹{total.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {error && <p className="text-red-500 text-sm font-bold text-center">{error}</p>}
+
+          <button type="submit" className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100">
+            Send Bill & Continue
+          </button>
+        </form>
+      </div>
+    </Layout>
+  );
+};
+
+const DueBookPage = () => {
+  const [dues, setDues] = useState<DuePayment[]>(storage.get<DuePayment[]>('due_payments', []));
+  const [activePartialId, setActivePartialId] = useState<string | null>(null);
+  const [activeFullId, setActiveFullId] = useState<string | null>(null);
+  const [partialAmount, setPartialAmount] = useState('');
+  const [paymentPhone, setPaymentPhone] = useState('');
+  const [error, setError] = useState('');
+  const [confirmation, setConfirmation] = useState<{ type: 'full' | 'partial', phone: string, amount?: number, remaining?: number } | null>(null);
+
+  const validatePhone = (phone: string) => {
+    if (phone.length !== 10 || !/^\d+$/.test(phone)) {
+      setError('Mobile number must be exactly 10 digits');
+      return false;
+    }
+    setError('');
+    return true;
+  };
+
+  const markAsPaid = (id: string, phone: string) => {
+    if (!validatePhone(phone)) return;
+    const due = dues.find(d => d.id === id);
+    if (!due) return;
+    
+    const updatedDues = dues.map(d => d.id === id ? { ...d, status: 'paid' as const, total: 0, customerPhone: phone } : d);
+    setDues(updatedDues);
+    storage.set('due_payments', updatedDues);
+    setConfirmation({ type: 'full', phone });
+    setActiveFullId(null);
+  };
+
+  const handlePartialPayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activePartialId) return;
+    if (!validatePhone(paymentPhone)) return;
+    
+    const amount = parseFloat(partialAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+
+    const due = dues.find(d => d.id === activePartialId);
+    if (!due) return;
+
+    if (amount >= due.total) {
+      markAsPaid(activePartialId, paymentPhone);
+      setActivePartialId(null);
+      setPartialAmount('');
+      setPaymentPhone('');
+      return;
+    }
+
+    const remaining = due.total - amount;
+    const updatedDues = dues.map(d => d.id === activePartialId ? { ...d, total: remaining, customerPhone: paymentPhone } : d);
+    
+    setDues(updatedDues);
+    storage.set('due_payments', updatedDues);
+    setConfirmation({ type: 'partial', phone: paymentPhone, amount, remaining });
+    setActivePartialId(null);
+    setPartialAmount('');
+    setPaymentPhone('');
+  };
+
+  const deleteDue = (id: string) => {
+    const updatedDues = dues.filter(d => d.id !== id);
+    setDues(updatedDues);
+    storage.set('due_payments', updatedDues);
+  };
+
+  const pendingDues = dues.filter(d => d.status === 'pending');
+  const totalPending = pendingDues.reduce((acc, d) => acc + d.total, 0);
+
+  if (confirmation) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+        <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-6">
+          <Send size={32} />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 mb-2">Confirmation Sent!</h2>
+        {confirmation.type === 'full' ? (
+          <p className="text-slate-500 mb-10">
+            Message sent to <span className="font-bold text-slate-900">{confirmation.phone}</span>: 
+            "Your due has been fully paid. Thank you!"
+          </p>
+        ) : (
+          <p className="text-slate-500 mb-10">
+            Message sent to <span className="font-bold text-slate-900">{confirmation.phone}</span>: 
+            "Payment of <span className="font-bold text-slate-900">₹{confirmation.amount?.toFixed(2)}</span> received. 
+            Remaining balance: <span className="font-bold text-red-600">₹{confirmation.remaining?.toFixed(2)}</span>"
+          </p>
+        )}
+        <button 
+          onClick={() => setConfirmation(null)}
+          className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold"
+        >
+          Back to Due Book
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <Layout title="Due Book">
+      <div className="bg-red-600 p-8 rounded-[2.5rem] text-white mb-8 shadow-xl shadow-red-100">
+        <p className="text-red-100 text-sm font-medium mb-1">Total Outstanding Dues</p>
+        <h2 className="text-4xl font-bold">₹{totalPending.toFixed(2)}</h2>
+        <div className="mt-6 flex items-center gap-2 text-red-100 text-sm font-bold">
+          <div className="bg-white/20 p-1 rounded-full">
+            <AlertTriangle size={14} />
+          </div>
+          <span>{pendingDues.length} Pending Payments</span>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {dues.slice().reverse().map(due => (
+          <div key={due.id} className={`bg-white p-5 rounded-3xl border ${due.status === 'paid' ? 'opacity-60 grayscale' : 'border-slate-100 shadow-sm'}`}>
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h4 className="font-bold text-slate-900 text-lg">{due.customerName}</h4>
+                <p className="text-xs text-slate-500 flex items-center gap-1">
+                  <Phone size={10} /> {due.customerPhone}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-red-600 text-lg">₹{due.total.toFixed(2)}</p>
+                {due.originalTotal > due.total && due.total > 0 && (
+                  <p className="text-[10px] text-slate-400 line-through">Original: ₹{due.originalTotal.toFixed(2)}</p>
+                )}
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                  {new Date(due.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mb-4">
+              {due.items.map((item, idx) => (
+                <span key={idx} className="text-[10px] bg-slate-50 text-slate-500 px-2 py-1 rounded-md border border-slate-100">
+                  {item.name} ({item.quantity})
+                </span>
+              ))}
+            </div>
+
+            {activePartialId === due.id ? (
+              <form onSubmit={handlePartialPayment} className="mb-4 bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Confirm Mobile Number</p>
+                  <input 
+                    type="tel" 
+                    placeholder="10 digit mobile number"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                    value={paymentPhone}
+                    onChange={e => setPaymentPhone(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Enter Paid Amount</p>
+                  <div className="flex gap-2">
+                    <input 
+                      autoFocus
+                      type="number" 
+                      step="0.01"
+                      placeholder="Amount"
+                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                      value={partialAmount}
+                      onChange={e => setPartialAmount(e.target.value)}
+                    />
+                    <button type="submit" className="bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold text-sm">
+                      Confirm
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setActivePartialId(null);
+                        setError('');
+                      }}
+                      className="bg-slate-200 text-slate-600 px-4 py-2 rounded-xl font-bold text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                {error && <p className="text-red-500 text-[10px] font-bold">{error}</p>}
+              </form>
+            ) : activeFullId === due.id ? (
+              <div className="mb-4 bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Confirm Mobile Number</p>
+                  <input 
+                    type="tel" 
+                    placeholder="10 digit mobile number"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                    value={paymentPhone}
+                    onChange={e => setPaymentPhone(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => markAsPaid(due.id, paymentPhone)}
+                    className="flex-1 bg-emerald-500 text-white py-2 rounded-xl font-bold text-sm"
+                  >
+                    Confirm Full Payment
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setActiveFullId(null);
+                      setError('');
+                    }}
+                    className="bg-slate-200 text-slate-600 px-4 py-2 rounded-xl font-bold text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {error && <p className="text-red-500 text-[10px] font-bold">{error}</p>}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  {due.status === 'pending' ? (
+                    <>
+                      <button 
+                        onClick={() => {
+                          setActiveFullId(due.id);
+                          setPaymentPhone(due.customerPhone);
+                        }}
+                        className="flex-1 bg-emerald-500 text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle2 size={16} /> Mark Paid
+                      </button>
+                    </>
+                  ) : (
+                    <div className="flex-1 bg-slate-100 text-slate-500 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
+                      <CheckCircle2 size={16} /> Already Paid
+                    </div>
+                  )}
+                  <button 
+                    onClick={() => deleteDue(due.id)}
+                    className="p-2.5 bg-slate-100 text-slate-400 hover:text-red-500 rounded-xl transition-colors"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+                {due.status === 'pending' && (
+                  <button 
+                    onClick={() => {
+                      setActivePartialId(due.id);
+                      setPaymentPhone(due.customerPhone);
+                    }}
+                    className="w-full bg-slate-100 text-slate-700 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 border border-slate-200"
+                  >
+                    <Plus size={16} /> Partial Payment
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        {dues.length === 0 && (
+          <div className="text-center py-10">
+            <p className="text-slate-400">No due payments recorded</p>
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -1271,6 +1729,8 @@ export default function App() {
         <Route path="/success" element={<ProtectedRoute><SuccessPage /></ProtectedRoute>} />
         <Route path="/send-bill" element={<ProtectedRoute><SendBillPage /></ProtectedRoute>} />
         <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
+        <Route path="/due-payment" element={<ProtectedRoute><DuePaymentPage /></ProtectedRoute>} />
+        <Route path="/due-book" element={<ProtectedRoute><DueBookPage /></ProtectedRoute>} />
       </Routes>
     </Router>
   );
