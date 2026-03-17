@@ -1,5 +1,5 @@
 {
   "name": "SmartShop",
   "description": "A simple inventory and sales management app for small shop owners with UPI integration and low stock alerts.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"]
 }
