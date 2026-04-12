@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
 import { 
   BarChart, 
   Bar, 
@@ -1004,50 +1005,93 @@ const AddProductsPage = () => {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target?.result as string;
-      if (!text) return;
+      const data = event.target?.result;
+      if (!data) return;
 
-      const lines = text.split('\n');
-      const newProducts: Product[] = [];
-      let skippedRows = 0;
+      try {
+        const workbook = XLSX.read(data, { type: 'binary' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
-      // Skip header if it exists (check if first row contains "name" or "product")
-      const startIdx = lines[0].toLowerCase().includes('name') ? 1 : 0;
-
-      for (let i = startIdx; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        const [name, priceStr, qtyStr, unit] = line.split(',').map(s => s.trim());
-        const price = parseFloat(priceStr);
-        const qty = parseInt(qtyStr);
-
-        if (name && !isNaN(price) && !isNaN(qty)) {
-          newProducts.push({
-            id: (Date.now() + i).toString(),
-            name,
-            price,
-            quantity: qty,
-            unit: unit || 'pieces'
-          });
-        } else {
-          skippedRows++;
+        if (jsonData.length === 0) {
+          alert('The file appears to be empty.');
+          return;
         }
-      }
 
-      if (newProducts.length > 0) {
-        const updatedProducts = [...products, ...newProducts];
-        setProducts(updatedProducts);
-        storage.set('products', updatedProducts);
-        setStatus(`Successfully uploaded ${newProducts.length} products! ${skippedRows > 0 ? `(${skippedRows} rows skipped)` : ''}`);
-        setTimeout(() => setStatus(''), 5000);
-      } else {
-        alert('No valid products found in CSV. Format: Name, Price, Quantity, Unit');
+        console.log('Parsed Excel/CSV data:', jsonData);
+
+        const headers = jsonData[0].map((h: any) => String(h || '').trim().toLowerCase());
+        console.log('Detected headers:', headers);
+
+        const findIndex = (possibleNames: string[]) => {
+          return headers.findIndex(h => possibleNames.includes(h));
+        };
+
+        const nameIdx = findIndex(['name', 'product name', 'product', 'item']);
+        const priceIdx = findIndex(['price', 'rate', 'cost']);
+        const qtyIdx = findIndex(['quantity', 'qty', 'stock', 'count']);
+        const unitIdx = findIndex(['unit', 'measure', 'type']);
+
+        console.log('Column mapping indices:', { nameIdx, priceIdx, qtyIdx, unitIdx });
+
+        const newProducts: Product[] = [];
+        let skippedRows = 0;
+
+        // If we found headers, start from line 1, otherwise assume no header and try line 0
+        const hasHeader = nameIdx !== -1 || priceIdx !== -1 || qtyIdx !== -1;
+        const startIdx = hasHeader ? 1 : 0;
+
+        for (let i = startIdx; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          if (!row || row.length === 0) continue;
+          
+          // Flexible mapping based on indices or fallback to fixed positions
+          const name = nameIdx !== -1 ? String(row[nameIdx] || '').trim() : String(row[0] || '').trim();
+          const priceStr = priceIdx !== -1 ? row[priceIdx] : row[1];
+          const qtyStr = qtyIdx !== -1 ? row[qtyIdx] : row[2];
+          const unit = unitIdx !== -1 ? String(row[unitIdx] || '').trim() : String(row[3] || '').trim();
+
+          const price = Number(priceStr);
+          const qty = Number(qtyStr);
+
+          if (name && !isNaN(price) && !isNaN(qty)) {
+            const product = {
+              id: (Date.now() + i).toString(),
+              name,
+              price,
+              quantity: qty,
+              unit: unit || 'pieces'
+            };
+            console.log('Processed product:', product);
+            newProducts.push(product);
+          } else {
+            // Only skip if it's not a completely empty row
+            if (row.some(cell => cell !== null && cell !== undefined && cell !== '')) {
+              console.warn(`Skipping invalid row ${i}:`, row);
+              skippedRows++;
+            }
+          }
+        }
+
+        if (newProducts.length > 0) {
+          const updatedProducts = [...products, ...newProducts];
+          setProducts(updatedProducts);
+          storage.set('products', updatedProducts);
+          setStatus(`${newProducts.length} products added successfully`);
+          setTimeout(() => setStatus(''), 5000);
+        } else {
+          console.error('No valid products found after processing.');
+          alert('No valid products found in file');
+        }
+      } catch (err) {
+        console.error('Error parsing file:', err);
+        alert('Error parsing file. Please ensure it is a valid CSV or Excel file.');
       }
       
       if (fileInputRef.current) fileInputRef.current.value = '';
     };
-    reader.readAsText(file);
+    reader.readAsBinaryString(file);
   };
 
   const handleAdd = (e: React.FormEvent) => {
@@ -1217,7 +1261,7 @@ const AddProductsPage = () => {
 
           <input 
             type="file" 
-            accept=".csv" 
+            accept=".csv, .xlsx, .xls" 
             className="hidden" 
             ref={fileInputRef}
             onChange={handleFileUpload}
@@ -1233,113 +1277,137 @@ const AddProductsPage = () => {
         </div>
       </div>
 
-      <div className="mt-12">
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-6 ml-1">Inventory Management</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {products.slice().reverse().map(p => (
-            <div key={p.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex flex-col justify-between group min-h-[120px] transition-all shadow-md hover:shadow-lg">
-              {editingId === p.id ? (
-                <div className="flex flex-col gap-3 w-full">
-                  <input 
-                    type="text" 
-                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    placeholder="Product Name"
-                    autoFocus
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Qty:</span>
+      <div className="mt-12 bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+        <div className="p-8 border-b border-slate-50 flex justify-between items-center">
+          <div>
+            <h3 className="text-xl font-bold text-slate-900">Inventory Management</h3>
+            <p className="text-slate-500 text-sm">View and manage your shop products</p>
+          </div>
+          <div className="bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-sm font-bold">
+            {products.length} Total Products
+          </div>
+        </div>
+        
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50">
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Product Name</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-center">Price</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-center">Quantity</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-center">Unit</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {products.slice().reverse().map(p => (
+                <tr key={p.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-8 py-5">
+                    {editingId === p.id ? (
+                      <input 
+                        type="text" 
+                        className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="font-bold text-slate-800">{p.name}</span>
+                    )}
+                  </td>
+                  <td className="px-8 py-5 text-center">
+                    {editingId === p.id ? (
                       <input 
                         type="number" 
-                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                        step="0.01"
+                        className="w-24 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-center"
+                        value={editPrice}
+                        onChange={e => setEditPrice(e.target.value)}
+                      />
+                    ) : (
+                      <span className="text-slate-600 font-medium">₹{p.price}</span>
+                    )}
+                  </td>
+                  <td className="px-8 py-5 text-center">
+                    {editingId === p.id ? (
+                      <input 
+                        type="number" 
+                        className="w-20 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-center"
                         value={editQuantity}
                         onChange={e => setEditQuantity(e.target.value)}
                       />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Unit:</span>
+                    ) : (
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${p.quantity < 10 ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-600'}`}>
+                        {p.quantity}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-8 py-5 text-center">
+                    {editingId === p.id ? (
                       <select 
-                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500"
                         value={editUnit}
                         onChange={e => setEditUnit(e.target.value)}
                       >
                         {units.map(u => <option key={u} value={u}>{u}</option>)}
                       </select>
+                    ) : (
+                      <span className="text-slate-400 text-sm">{p.unit || 'units'}</span>
+                    )}
+                  </td>
+                  <td className="px-8 py-5 text-right">
+                    <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {editingId === p.id ? (
+                        <>
+                          <button 
+                            onClick={() => handleUpdateProduct(p.id)}
+                            className="bg-emerald-600 text-white p-2 rounded-xl hover:bg-emerald-700 transition-colors shadow-sm"
+                          >
+                            <CheckCircle2 size={18} />
+                          </button>
+                          <button 
+                            onClick={() => setEditingId(null)}
+                            className="bg-slate-100 text-slate-400 p-2 rounded-xl hover:bg-slate-200 transition-colors"
+                          >
+                            <X size={18} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button 
+                            onClick={() => {
+                              setEditingId(p.id);
+                              setEditName(p.name);
+                              setEditPrice(p.price.toString());
+                              setEditQuantity(p.quantity.toString());
+                              setEditUnit(p.unit || 'units');
+                            }}
+                            className="text-slate-400 hover:text-emerald-600 p-2 hover:bg-emerald-50 rounded-xl transition-all"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                          <button 
+                            onClick={() => setItemToDelete(p)}
+                            className="text-slate-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </>
+                      )}
                     </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Price:</span>
-                      <input 
-                        type="number" 
-                        step="0.01"
-                        className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={editPrice}
-                        onChange={e => setEditPrice(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => handleUpdateProduct(p.id)}
-                        className="bg-emerald-600 text-white p-2 rounded-xl hover:bg-emerald-700 transition-colors shadow-sm"
-                      >
-                        <CheckCircle2 size={18} />
-                      </button>
-                      <button 
-                        onClick={() => setEditingId(null)}
-                        className="bg-slate-100 text-slate-400 p-2 rounded-xl hover:bg-slate-200 transition-colors"
-                      >
-                        <Plus className="rotate-45" size={18} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex-1">
-                      <p className="font-bold text-slate-800 text-lg">{p.name}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${p.quantity < 10 ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-500'}`}>
-                          Stock: {p.quantity} {p.unit || 'units'}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="font-bold text-emerald-600 text-xl">₹{p.price}</p>
-                  </div>
-                  
-                  <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-50">
-                    <button 
-                      onClick={() => { 
-                        setEditingId(p.id); 
-                        setEditName(p.name);
-                        setEditPrice(p.price.toString()); 
-                        setEditQuantity(p.quantity.toString()); 
-                        setEditUnit(p.unit || 'units');
-                      }}
-                      className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 p-2 rounded-xl transition-colors"
-                    >
-                      <Edit2 size={18} />
-                    </button>
-                    <button 
-                      onClick={() => setItemToDelete(p)}
-                      className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-xl transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </>
+                  </td>
+                </tr>
+              ))}
+              {products.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center text-slate-400 italic">
+                    No products in inventory yet. Add manually or upload a CSV.
+                  </td>
+                </tr>
               )}
-            </div>
-          ))}
+            </tbody>
+          </table>
         </div>
-        {products.length === 0 && (
-          <div className="text-center py-20 bg-white rounded-[2.5rem] border border-slate-100 border-dashed">
-            <p className="text-slate-400 font-medium">No products in inventory yet.</p>
-          </div>
-        )}
       </div>
     </Layout>
   );
@@ -1354,6 +1422,7 @@ const SellProductsPage = () => {
   const location = useLocation();
   const [search, setSearch] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
+  const [recentProducts, setRecentProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [sellQty, setSellQty] = useState('1');
   const [error, setError] = useState('');
@@ -1364,7 +1433,41 @@ const SellProductsPage = () => {
     setProducts(allProducts.filter(p => 
       p.name.toLowerCase().includes(search.toLowerCase())
     ));
+    setRecentProducts(storage.get<Product[]>('recentProducts', []));
   }, [search]);
+
+  const addRecentToCart = (product: Product) => {
+    if (product.quantity <= 0) {
+      alert(`${product.name} is out of stock!`);
+      return;
+    }
+
+    const existingItem = cart.find(item => item.productId === product.id);
+    let newCart;
+    if (existingItem) {
+      if (existingItem.quantity + 1 > product.quantity) {
+        alert(`Cannot add more ${product.name}. Stock limit reached!`);
+        return;
+      }
+      newCart = cart.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+    } else {
+      newCart = [...cart, { 
+        productId: product.id, 
+        name: product.name, 
+        quantity: 1, 
+        price: product.price, 
+        unit: product.unit 
+      }];
+    }
+
+    setCart(newCart);
+    storage.set('cart', newCart);
+    // Visual feedback
+    setStatusMessage(`${product.name} added to cart`);
+    setTimeout(() => setStatusMessage(''), 2000);
+  };
+
+  const [statusMessage, setStatusMessage] = useState('');
 
   const addToCart = () => {
     if (!selectedProduct) return;
@@ -1413,6 +1516,42 @@ const SellProductsPage = () => {
           />
         </div>
       </div>
+
+      {recentProducts.length > 0 && !search && (
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-4 ml-1">
+            <History size={16} className="text-accent" />
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Frequently Sold</h3>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide -mx-1 px-1">
+            {recentProducts.map(p => (
+              <button 
+                key={p.id}
+                onClick={() => addRecentToCart(p)}
+                className="flex-shrink-0 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all text-left min-w-[140px] active:scale-95"
+              >
+                <p className="font-bold text-slate-800 text-sm line-clamp-1">{p.name}</p>
+                <p className="text-accent font-bold text-xs mt-1">₹{p.price}</p>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-medium">Stock: {p.quantity}</span>
+                  <Plus size={14} className="text-accent" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {statusMessage && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-3 rounded-full text-sm font-bold shadow-2xl flex items-center gap-2"
+        >
+          <CheckCircle2 size={16} className="text-accent" />
+          {statusMessage}
+        </motion.div>
+      )}
 
       <div className="space-y-3 mb-24">
         {products.map(p => (
@@ -1630,6 +1769,27 @@ const PaymentPage = () => {
     };
     storage.set('sales', [...sales, newSale]);
     storage.set('lastSaleId', newSale.id);
+
+    // Update recent products
+    const recentProducts = storage.get<Product[]>('recentProducts', []);
+    const currentProducts = storage.get<Product[]>('products', []);
+    
+    // Get unique product IDs from current cart
+    const cartProductIds = Array.from(new Set(cart.map(item => item.productId)));
+    
+    // Find full product details for these IDs
+    const soldProducts = cartProductIds
+      .map(id => currentProducts.find(p => p.id === id))
+      .filter((p): p is Product => !!p);
+
+    // Merge with existing recent products, keeping only unique ones, and limit to 10
+    let updatedRecent = [...soldProducts];
+    recentProducts.forEach(rp => {
+      if (!updatedRecent.find(p => p.id === rp.id)) {
+        updatedRecent.push(rp);
+      }
+    });
+    storage.set('recentProducts', updatedRecent.slice(0, 10));
 
     // Clear cart
     storage.set('cart', []);
