@@ -30,13 +30,13 @@ import {
   Book,
   History,
   Settings,
-  Scan,
   RefreshCw,
-  X
+  X,
+  Upload,
+  FileText
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ScanProductsPage, BarcodeScanner } from './ScanProducts';
 import { 
   BarChart, 
   Bar, 
@@ -55,7 +55,6 @@ export interface Product {
   quantity: number;
   price: number;
   unit: string;
-  barcode?: string;
 }
 
 export interface User {
@@ -70,7 +69,6 @@ export interface CartItem {
   quantity: number;
   price: number;
   unit: string;
-  barcode?: string;
 }
 
 export interface Sale {
@@ -126,9 +124,7 @@ export const storage = {
   }
 };
 
-// --- Barcode Scanner Component ---
 
-// Removed and moved to ScanProducts.tsx
 
 // --- Confirmation Dialog Component ---
 
@@ -257,7 +253,6 @@ export const Layout = ({ children, title, showBack = true, showSettings = false 
   const menuItems = [
     { title: 'Dukaan', icon: Store, path: '/' },
     { title: 'Add Products', icon: PlusCircle, path: '/add-products' },
-    { title: 'Scan Products', icon: Scan, path: '/scan-products' },
     { title: 'Sell Product', icon: ShoppingCart, path: '/sell' },
     { title: 'Sales', icon: BarChart3, path: '/sales' },
     { title: 'Due Book', icon: BookText, path: '/due-book' },
@@ -844,7 +839,6 @@ const HomePage = () => {
 
   const menuItems = [
     { title: 'Add Products', icon: PlusCircle, path: '/add-products', color: 'bg-primary' },
-    { title: 'Scan Products', icon: Scan, path: '/scan-products', color: 'bg-blue-600' },
     { title: 'Sell Products', icon: ShoppingCart, path: '/sell', color: 'bg-accent' },
     { title: 'Sales', icon: BarChart3, path: '/sales', color: 'bg-warning' },
     { title: 'Due Book', icon: BookText, path: '/due-book', color: 'bg-red-500' },
@@ -1000,8 +994,61 @@ const AddProductsPage = () => {
   const [editQuantity, setEditQuantity] = useState('');
   const [editUnit, setEditUnit] = useState('');
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const units = ['packets', 'kg', 'litres', 'grams', 'ml', 'pieces', 'dozen', 'box'];
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      const lines = text.split('\n');
+      const newProducts: Product[] = [];
+      let skippedRows = 0;
+
+      // Skip header if it exists (check if first row contains "name" or "product")
+      const startIdx = lines[0].toLowerCase().includes('name') ? 1 : 0;
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        const [name, priceStr, qtyStr, unit] = line.split(',').map(s => s.trim());
+        const price = parseFloat(priceStr);
+        const qty = parseInt(qtyStr);
+
+        if (name && !isNaN(price) && !isNaN(qty)) {
+          newProducts.push({
+            id: (Date.now() + i).toString(),
+            name,
+            price,
+            quantity: qty,
+            unit: unit || 'pieces'
+          });
+        } else {
+          skippedRows++;
+        }
+      }
+
+      if (newProducts.length > 0) {
+        const updatedProducts = [...products, ...newProducts];
+        setProducts(updatedProducts);
+        storage.set('products', updatedProducts);
+        setStatus(`Successfully uploaded ${newProducts.length} products! ${skippedRows > 0 ? `(${skippedRows} rows skipped)` : ''}`);
+        setTimeout(() => setStatus(''), 5000);
+      } else {
+        alert('No valid products found in CSV. Format: Name, Price, Quantity, Unit');
+      }
+      
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
+  };
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1073,7 +1120,7 @@ const AddProductsPage = () => {
         onCancel={() => setItemToDelete(null)}
       />
       
-      <div className="max-w-md mx-auto">
+      <div className="max-w-md mx-auto space-y-6">
         <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-xl transition-colors">
           <div className="mb-6 text-center">
             <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1150,6 +1197,40 @@ const AddProductsPage = () => {
             )}
           </form>
         </div>
+
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-xl">
+          <div className="mb-6 text-center">
+            <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Upload size={32} />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900">Bulk Upload</h2>
+            <p className="text-slate-500 text-sm">Upload CSV file with many products</p>
+          </div>
+
+          <div className="bg-slate-50 p-4 rounded-2xl border border-dashed border-slate-200 mb-6">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">CSV Format</p>
+            <p className="text-sm text-slate-600 font-mono bg-white p-2 rounded-lg border border-slate-100">
+              Name, Price, Quantity, Unit
+            </p>
+            <p className="text-[10px] text-slate-400 mt-2 italic">Example: Apple, 120, 10, kg</p>
+          </div>
+
+          <input 
+            type="file" 
+            accept=".csv" 
+            className="hidden" 
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+          />
+          
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-lg shadow-blue-100 active:scale-[0.98] transition-all text-lg flex items-center justify-center gap-2"
+          >
+            <FileText size={20} />
+            Choose CSV File
+          </button>
+        </div>
       </div>
 
       <div className="mt-12">
@@ -1224,7 +1305,6 @@ const AddProductsPage = () => {
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${p.quantity < 10 ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-500'}`}>
                           Stock: {p.quantity} {p.unit || 'units'}
                         </span>
-                        {p.barcode && <span className="text-[10px] bg-blue-50 text-blue-500 px-2 py-0.5 rounded-lg flex items-center gap-1 border border-blue-100"><Scan size={10} /> {p.barcode}</span>}
                       </div>
                     </div>
                     <p className="font-bold text-emerald-600 text-xl">₹{p.price}</p>
@@ -1265,9 +1345,7 @@ const AddProductsPage = () => {
   );
 };
 
-// --- Scan Products Page ---
 
-// Moved to ScanProducts.tsx
 
 
 
@@ -1280,26 +1358,13 @@ const SellProductsPage = () => {
   const [sellQty, setSellQty] = useState('1');
   const [error, setError] = useState('');
   const [cart, setCart] = useState<CartItem[]>(storage.get<CartItem[]>('cart', []));
-  const [showScanner, setShowScanner] = useState(false);
 
   useEffect(() => {
     const allProducts = storage.get<Product[]>('products', []);
     setProducts(allProducts.filter(p => 
-      p.name.toLowerCase().includes(search.toLowerCase()) || 
-      (p.barcode && p.barcode.includes(search))
+      p.name.toLowerCase().includes(search.toLowerCase())
     ));
   }, [search]);
-
-  const handleBarcodeScan = (barcode: string) => {
-    const allProducts = storage.get<Product[]>('products', []);
-    const product = allProducts.find(p => p.barcode === barcode);
-    if (product) {
-      setSelectedProduct(product);
-      setSearch('');
-    } else {
-      alert('Product not found for barcode: ' + barcode);
-    }
-  };
 
   const addToCart = () => {
     if (!selectedProduct) return;
@@ -1324,7 +1389,7 @@ const SellProductsPage = () => {
       }
       newCart = cart.map(item => item.productId === selectedProduct.id ? { ...item, quantity: item.quantity + qty } : item);
     } else {
-      newCart = [...cart, { productId: selectedProduct.id, name: selectedProduct.name, quantity: qty, price: selectedProduct.price, unit: selectedProduct.unit, barcode: selectedProduct.barcode }];
+      newCart = [...cart, { productId: selectedProduct.id, name: selectedProduct.name, quantity: qty, price: selectedProduct.price, unit: selectedProduct.unit }];
     }
 
     setCart(newCart);
@@ -1336,29 +1401,17 @@ const SellProductsPage = () => {
 
   return (
     <Layout title="Sell Products">
-      {showScanner && (
-        <BarcodeScanner 
-          onScan={handleBarcodeScan} 
-          onClose={() => setShowScanner(false)} 
-        />
-      )}
-      <div className="relative mb-6 flex gap-2">
+      <div className="relative mb-6">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
           <input 
             type="text" 
-            placeholder="Search products or scan..."
+            placeholder="Search products..."
             className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-accent shadow-md"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <button 
-          onClick={() => setShowScanner(true)}
-          className="bg-white p-4 rounded-2xl border border-slate-200 text-slate-600 shadow-md hover:bg-slate-50 transition-all"
-        >
-          <Scan size={24} />
-        </button>
       </div>
 
       <div className="space-y-3 mb-24">
@@ -2511,7 +2564,6 @@ export default function App() {
           <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
           <Route path="/add-upi" element={<ProtectedRoute><AddUpiPage /></ProtectedRoute>} />
           <Route path="/add-products" element={<ProtectedRoute><AddProductsPage /></ProtectedRoute>} />
-          <Route path="/scan-products" element={<ProtectedRoute><ScanProductsPage /></ProtectedRoute>} />
           <Route path="/sell" element={<ProtectedRoute><SellProductsPage /></ProtectedRoute>} />
           <Route path="/cart" element={<ProtectedRoute><CartPage /></ProtectedRoute>} />
           <Route path="/payment" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
