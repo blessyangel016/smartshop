@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import { 
   Package,
@@ -31,11 +31,12 @@ import {
   History,
   Settings,
   Scan,
+  RefreshCw,
   X
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { 
   BarChart, 
   Bar, 
@@ -129,70 +130,110 @@ const storage = {
 
 const BarcodeScanner = ({ onScan, onClose }: { onScan: (data: string) => void, onClose: () => void }) => {
   const [scannedCode, setScannedCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("Initializing...");
 
   useEffect(() => {
     const scanner = new Html5QrcodeScanner(
       "reader",
-      { fps: 10, qrbox: { width: 250, height: 150 } },
+      { 
+        fps: 10, 
+        qrbox: { width: 250, height: 150 },
+        aspectRatio: 1.777,
+        disableFlip: false,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE
+        ]
+      },
       /* verbose= */ false
     );
 
     scanner.render(
       (decodedText) => {
+        setStatus("Detected!");
         setScannedCode(decodedText);
-        scanner.clear().catch(e => console.error(e));
+        scanner.clear().catch(err => console.error("Failed to clear scanner", err));
       },
       (error) => {
-        // console.warn(error);
+        // Scan failure, usually just means no barcode in frame
       }
     );
 
     return () => {
-      scanner.clear().catch(error => console.error("Failed to clear scanner", error));
+      scanner.clear().catch(err => console.error("Failed to clear scanner on unmount", err));
     };
   }, []);
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-[100] flex flex-col items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md rounded-3xl overflow-hidden relative shadow-2xl border border-slate-100">
+    <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-          <h3 className="font-bold text-slate-900">Scan Barcode</h3>
+          <div>
+            <h3 className="font-bold text-slate-900">Barcode Scanner</h3>
+            <p className="text-[10px] text-slate-500 font-bold uppercase">{status}</p>
+          </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500">
-            <Plus className="rotate-45" size={20} />
+            <X size={20} />
           </button>
         </div>
         
-        {!scannedCode ? (
-          <>
-            <div id="reader" className="w-full"></div>
-            <div className="p-6 text-center">
-              <p className="text-sm text-slate-500">Place the product barcode inside the box to scan.</p>
+        <div className="p-4">
+          <div id="reader"></div>
+          
+          {error && (
+            <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-xl text-sm text-center">
+              <AlertTriangle className="mx-auto mb-2" size={24} />
+              <p>{error}</p>
+              <button 
+                onClick={() => window.location.reload()}
+                className="mt-2 font-bold underline"
+              >
+                Try Again
+              </button>
             </div>
-          </>
-        ) : (
-          <div className="p-8 text-center space-y-6">
-            <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto">
-              <CheckCircle2 size={40} />
+          )}
+        </div>
+
+        {scannedCode ? (
+          <div className="p-6 text-center space-y-6 border-t border-slate-100">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+              <CheckCircle2 size={32} />
             </div>
             <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Scanned Barcode</p>
-              <p className="text-2xl font-bold text-slate-900 font-mono tracking-wider">{scannedCode}</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Scanned Code</p>
+              <p className="text-2xl font-bold text-slate-900 font-mono">{scannedCode}</p>
             </div>
-            <button 
-              onClick={() => {
-                onScan(scannedCode);
-                onClose();
-              }}
-              className="w-full bg-accent text-white py-4 rounded-2xl font-bold shadow-lg shadow-accent/20 flex items-center justify-center gap-2"
-            >
-              <PlusCircle size={20} /> Confirm Product
-            </button>
-            <button 
-              onClick={() => setScannedCode(null)}
-              className="text-sm text-slate-400 font-bold hover:text-slate-600"
-            >
-              Scan Again
-            </button>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => {
+                  onScan(scannedCode);
+                  onClose();
+                }}
+                className="flex-1 bg-primary text-white py-3 rounded-xl font-bold shadow-lg"
+              >
+                Confirm
+              </button>
+              <button 
+                onClick={() => {
+                  setScannedCode(null);
+                  setStatus("Scanning...");
+                  window.location.reload();
+                }}
+                className="p-3 bg-slate-100 text-slate-500 rounded-xl"
+              >
+                <RefreshCw size={20} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 text-center bg-slate-50">
+            <p className="text-xs text-slate-500">Position barcode within the frame</p>
           </div>
         )}
       </div>
@@ -327,6 +368,7 @@ const Layout = ({ children, title, showBack = true, showSettings = false }: { ch
   const menuItems = [
     { title: 'Dukaan', icon: Store, path: '/' },
     { title: 'Add Products', icon: PlusCircle, path: '/add-products' },
+    { title: 'Scan Products', icon: Scan, path: '/scan-products' },
     { title: 'Sell Product', icon: ShoppingCart, path: '/sell' },
     { title: 'Sales', icon: BarChart3, path: '/sales' },
     { title: 'Due Book', icon: BookText, path: '/due-book' },
@@ -913,6 +955,7 @@ const HomePage = () => {
 
   const menuItems = [
     { title: 'Add Products', icon: PlusCircle, path: '/add-products', color: 'bg-primary' },
+    { title: 'Scan Products', icon: Scan, path: '/scan-products', color: 'bg-blue-600' },
     { title: 'Sell Products', icon: ShoppingCart, path: '/sell', color: 'bg-accent' },
     { title: 'Sales', icon: BarChart3, path: '/sales', color: 'bg-warning' },
     { title: 'Due Book', icon: BookText, path: '/due-book', color: 'bg-red-500' },
@@ -978,7 +1021,7 @@ const HomePage = () => {
         </motion.div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-5">
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
         {menuItems.map((item, idx) => (
           <button 
             key={idx}
@@ -1059,7 +1102,7 @@ const AddUpiPage = () => {
 };
 
 const AddProductsPage = () => {
-  const [formData, setFormData] = useState({ name: '', quantity: '', price: '', unit: 'packets', barcode: '' });
+  const [formData, setFormData] = useState({ name: '', quantity: '', price: '', unit: 'packets' });
   const [status, setStatus] = useState('');
   const [products, setProducts] = useState<Product[]>(storage.get<Product[]>('products', []));
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1067,28 +1110,39 @@ const AddProductsPage = () => {
   const [editPrice, setEditPrice] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
   const [editUnit, setEditUnit] = useState('');
-  const [editBarcode, setEditBarcode] = useState('');
-  const [showScanner, setShowScanner] = useState(false);
-  const [isEditScanning, setIsEditScanning] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
 
   const units = ['packets', 'kg', 'litres', 'grams', 'ml', 'pieces', 'dozen', 'box'];
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validation
+    if (!formData.name || !formData.quantity || !formData.price) {
+      alert('Please fill all fields');
+      return;
+    }
+
+    const qty = parseInt(formData.quantity);
+    const price = parseFloat(formData.price);
+
+    if (qty < 0 || price < 0) {
+      alert('Quantity and Price cannot be negative');
+      return;
+    }
+
     const newProduct: Product = {
       id: Date.now().toString(),
       name: formData.name,
-      quantity: parseInt(formData.quantity),
-      price: parseFloat(formData.price),
+      quantity: qty,
+      price: price,
       unit: formData.unit,
-      barcode: formData.barcode
     };
     const updatedProducts = [...products, newProduct];
     setProducts(updatedProducts);
     storage.set('products', updatedProducts);
-    setFormData({ name: '', quantity: '', price: '', unit: 'packets', barcode: '' });
-    setStatus('Product Added Successfully!');
+    setFormData({ name: '', quantity: '', price: '', unit: 'packets' });
+    setStatus('Product added successfully!');
     setTimeout(() => setStatus(''), 3000);
   };
 
@@ -1100,8 +1154,16 @@ const AddProductsPage = () => {
   };
 
   const handleUpdateProduct = (id: string) => {
+    const price = parseFloat(editPrice);
+    const qty = parseInt(editQuantity);
+
+    if (qty < 0 || price < 0) {
+      alert('Quantity and Price cannot be negative');
+      return;
+    }
+
     const updatedProducts = products.map(p => 
-      p.id === id ? { ...p, name: editName || p.name, price: parseFloat(editPrice) || 0, quantity: parseInt(editQuantity) || 0, unit: editUnit || p.unit, barcode: editBarcode || p.barcode } : p
+      p.id === id ? { ...p, name: editName || p.name, price: price || 0, quantity: qty || 0, unit: editUnit || p.unit } : p
     );
     setProducts(updatedProducts);
     storage.set('products', updatedProducts);
@@ -1110,7 +1172,6 @@ const AddProductsPage = () => {
     setEditPrice('');
     setEditQuantity('');
     setEditUnit('');
-    setEditBarcode('');
   };
 
   return (
@@ -1122,152 +1183,107 @@ const AddProductsPage = () => {
         onConfirm={() => itemToDelete && handleDelete(itemToDelete.id)}
         onCancel={() => setItemToDelete(null)}
       />
-      {showScanner && (
-        <BarcodeScanner 
-          onScan={(data) => {
-            if (isEditScanning) {
-              setEditBarcode(data);
-            } else {
-              setFormData({ ...formData, barcode: data });
-            }
-          }} 
-          onClose={() => {
-            setShowScanner(false);
-            setIsEditScanning(false);
-          }} 
-        />
-      )}
-      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-md transition-colors">
-        <form onSubmit={handleAdd} className="space-y-5">
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Product Name</label>
-            <input 
-              required
-              type="text" 
-              placeholder="e.g. Milk 1L"
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.name}
-              onChange={e => setFormData({...formData, name: e.target.value})}
-            />
+      
+      <div className="max-w-md mx-auto">
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-xl transition-colors">
+          <div className="mb-6 text-center">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <PlusCircle size={32} />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900">Manual Entry</h2>
+            <p className="text-slate-500 text-sm">Best for loose items like rice, vegetables, etc.</p>
           </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Barcode (Optional)</label>
-            <div className="space-y-3">
-              <button 
-                type="button"
-                onClick={() => {
-                  setIsEditScanning(false);
-                  setShowScanner(true);
-                }}
-                className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors border border-slate-200"
-              >
-                <Scan size={20} />
-                Scan Product
-              </button>
-              <div className="relative">
+
+          <form onSubmit={handleAdd} className="space-y-6">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Product Name</label>
+              <input 
+                required
+                type="text" 
+                placeholder="e.g. Basmati Rice"
+                className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 text-lg font-medium"
+                value={formData.name}
+                onChange={e => setFormData({...formData, name: e.target.value})}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Quantity</label>
                 <input 
-                  type="text" 
-                  placeholder="Or enter barcode manually"
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  value={formData.barcode}
-                  onChange={e => setFormData({...formData, barcode: e.target.value})}
+                  required
+                  type="number" 
+                  min="0"
+                  placeholder="0"
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 text-lg font-medium"
+                  value={formData.quantity}
+                  onChange={e => setFormData({...formData, quantity: e.target.value})}
                 />
               </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Unit</label>
+                <select 
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 appearance-none text-lg font-medium"
+                  value={formData.unit}
+                  onChange={e => setFormData({...formData, unit: e.target.value})}
+                >
+                  {units.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Quantity</label>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Price (₹)</label>
               <input 
                 required
                 type="number" 
-                placeholder="0"
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-                value={formData.quantity}
-                onChange={e => setFormData({...formData, quantity: e.target.value})}
+                min="0"
+                step="0.01" 
+                placeholder="0.00"
+                className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 text-lg font-medium"
+                value={formData.price}
+                onChange={e => setFormData({...formData, price: e.target.value})}
               />
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Unit</label>
-              <select 
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-                value={formData.unit}
-                onChange={e => setFormData({...formData, unit: e.target.value})}
+            
+            <button type="submit" className="w-full bg-emerald-600 text-white py-5 rounded-2xl font-bold shadow-lg shadow-emerald-100 mt-2 active:scale-[0.98] transition-all text-lg">
+              Add to Inventory
+            </button>
+            
+            {status && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }} 
+                animate={{ opacity: 1, scale: 1 }} 
+                className="bg-emerald-50 text-emerald-600 p-4 rounded-2xl text-center text-sm font-bold border border-emerald-100"
               >
-                {units.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Price (₹)</label>
-            <input 
-              required
-              type="number" 
-              step="0.01" 
-              placeholder="0.00"
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.price}
-              onChange={e => setFormData({...formData, price: e.target.value})}
-            />
-          </div>
-          
-          <button type="submit" className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-100 mt-2 active:scale-[0.98] transition-all">
-            Add to Inventory
-          </button>
-          
-          {status && (
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }} 
-              animate={{ opacity: 1, scale: 1 }} 
-              className="bg-accent/10 text-accent p-3 rounded-xl text-center text-sm font-bold border border-accent/20"
-            >
-              {status}
-            </motion.div>
-          )}
-        </form>
+                {status}
+              </motion.div>
+            )}
+          </form>
+        </div>
       </div>
 
-      <div className="mt-8">
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Inventory Management</h3>
-        <div className="space-y-3">
+      <div className="mt-12">
+        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-6 ml-1">Inventory Management</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {products.slice().reverse().map(p => (
-            <div key={p.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex justify-between items-center group min-h-[80px] transition-all shadow-md hover:shadow-lg">
+            <div key={p.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex flex-col justify-between group min-h-[120px] transition-all shadow-md hover:shadow-lg">
               {editingId === p.id ? (
-                <div className="flex flex-col gap-2 w-full">
+                <div className="flex flex-col gap-3 w-full">
                   <input 
                     type="text" 
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
                     value={editName}
                     onChange={e => setEditName(e.target.value)}
                     placeholder="Product Name"
                     autoFocus
                   />
-                  <div className="space-y-2">
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setIsEditScanning(true);
-                        setShowScanner(true);
-                      }}
-                      className="w-full bg-slate-100 text-slate-700 py-2 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors border border-slate-200 text-xs"
-                    >
-                      <Scan size={14} />
-                      Scan Barcode
-                    </button>
-                    <input 
-                      type="text" 
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      value={editBarcode}
-                      onChange={e => setEditBarcode(e.target.value)}
-                      placeholder="Barcode"
-                    />
-                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-bold text-slate-400 uppercase">Qty:</span>
                       <input 
                         type="number" 
-                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
                         value={editQuantity}
                         onChange={e => setEditQuantity(e.target.value)}
                       />
@@ -1275,7 +1291,7 @@ const AddProductsPage = () => {
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-bold text-slate-400 uppercase">Unit:</span>
                       <select 
-                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
                         value={editUnit}
                         onChange={e => setEditUnit(e.target.value)}
                       >
@@ -1289,62 +1305,294 @@ const AddProductsPage = () => {
                       <input 
                         type="number" 
                         step="0.01"
-                        className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
                         value={editPrice}
                         onChange={e => setEditPrice(e.target.value)}
                       />
                     </div>
-                    <button 
-                      onClick={() => handleUpdateProduct(p.id)}
-                      className="bg-accent text-white p-2 rounded-xl hover:bg-accent/80 transition-colors shadow-sm"
-                    >
-                      <CheckCircle2 size={18} />
-                    </button>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => handleUpdateProduct(p.id)}
+                        className="bg-emerald-600 text-white p-2 rounded-xl hover:bg-emerald-700 transition-colors shadow-sm"
+                      >
+                        <CheckCircle2 size={18} />
+                      </button>
+                      <button 
+                        onClick={() => setEditingId(null)}
+                        className="bg-slate-100 text-slate-400 p-2 rounded-xl hover:bg-slate-200 transition-colors"
+                      >
+                        <Plus className="rotate-45" size={18} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
                 <>
-                  <div className="flex-1">
-                    <p className="font-bold text-slate-800">{p.name}</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-slate-500">Stock: {p.quantity} {p.unit || 'units'}</p>
-                      {p.barcode && <span className="text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded flex items-center gap-1 border border-slate-200"><Scan size={8} /> {p.barcode}</span>}
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex-1">
+                      <p className="font-bold text-slate-800 text-lg">{p.name}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${p.quantity < 10 ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-500'}`}>
+                          Stock: {p.quantity} {p.unit || 'units'}
+                        </span>
+                        {p.barcode && <span className="text-[10px] bg-blue-50 text-blue-500 px-2 py-0.5 rounded-lg flex items-center gap-1 border border-blue-100"><Scan size={10} /> {p.barcode}</span>}
+                      </div>
                     </div>
+                    <p className="font-bold text-emerald-600 text-xl">₹{p.price}</p>
                   </div>
                   
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <p className="font-bold text-blue-600">₹{p.price}</p>
-                      <button 
-                        onClick={() => { 
-                          setEditingId(p.id); 
-                          setEditName(p.name);
-                          setEditPrice(p.price.toString()); 
-                          setEditQuantity(p.quantity.toString()); 
-                          setEditUnit(p.unit || 'units');
-                          setEditBarcode(p.barcode || '');
-                        }}
-                        className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 p-1.5 rounded-lg transition-colors"
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                    </div>
-                    
+                  <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-50">
+                    <button 
+                      onClick={() => { 
+                        setEditingId(p.id); 
+                        setEditName(p.name);
+                        setEditPrice(p.price.toString()); 
+                        setEditQuantity(p.quantity.toString()); 
+                        setEditUnit(p.unit || 'units');
+                      }}
+                      className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 p-2 rounded-xl transition-colors"
+                    >
+                      <Edit2 size={18} />
+                    </button>
                     <button 
                       onClick={() => setItemToDelete(p)}
-                      className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+                      className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-xl transition-colors"
                     >
-                      <Trash2 size={16} />
+                      <Trash2 size={18} />
                     </button>
                   </div>
                 </>
               )}
             </div>
           ))}
-          {products.length === 0 && (
-            <p className="text-center text-slate-400 text-sm py-4">No products in inventory</p>
-          )}
         </div>
+        {products.length === 0 && (
+          <div className="text-center py-20 bg-white rounded-[2.5rem] border border-slate-100 border-dashed">
+            <p className="text-slate-400 font-medium">No products in inventory yet.</p>
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+};
+
+const ScanProductsPage = () => {
+  const navigate = useNavigate();
+  const [scannedBarcode, setScannedBarcode] = useState('');
+  const [status, setStatus] = useState<'idle' | 'scanning' | 'found' | 'new'>('idle');
+  const [product, setProduct] = useState<Product | null>(null);
+  const [newProductForm, setNewProductForm] = useState({ name: '', price: '', quantity: '' });
+  const [cart, setCart] = useState<CartItem[]>(storage.get<CartItem[]>('cart', []));
+  const [showScanner, setShowScanner] = useState(true);
+
+  const handleScan = (barcode: string) => {
+    setScannedBarcode(barcode);
+    const allProducts = storage.get<Product[]>('products', []);
+    const foundProduct = allProducts.find(p => p.barcode === barcode);
+
+    if (foundProduct) {
+      setProduct(foundProduct);
+      setStatus('found');
+      setShowScanner(false);
+    } else {
+      setProduct(null);
+      setStatus('new');
+      setShowScanner(false);
+    }
+  };
+
+  const addToCart = (p: Product) => {
+    const existingItem = cart.find(item => item.productId === p.id);
+    let updatedCart;
+    if (existingItem) {
+      updatedCart = cart.map(item => 
+        item.productId === p.id ? { ...item, quantity: item.quantity + 1 } : item
+      );
+    } else {
+      updatedCart = [...cart, { 
+        productId: p.id, 
+        name: p.name, 
+        price: p.price, 
+        quantity: 1, 
+        unit: p.unit || 'units',
+        barcode: p.barcode 
+      }];
+    }
+    setCart(updatedCart);
+    storage.set('cart', updatedCart);
+    alert(`${p.name} added to cart!`);
+    // Reset to scan again
+    setStatus('idle');
+    setScannedBarcode('');
+    setProduct(null);
+    setShowScanner(true);
+  };
+
+  const handleSaveNewProduct = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProductForm.name || !newProductForm.price || !newProductForm.quantity) {
+      alert('Please fill all fields');
+      return;
+    }
+
+    const price = parseFloat(newProductForm.price);
+    const qty = parseInt(newProductForm.quantity);
+
+    if (price < 0 || qty < 0) {
+      alert('Price and Quantity cannot be negative');
+      return;
+    }
+
+    const newProduct: Product = {
+      id: Date.now().toString(),
+      name: newProductForm.name,
+      price: price,
+      quantity: qty,
+      unit: 'pieces',
+      barcode: scannedBarcode
+    };
+
+    const allProducts = storage.get<Product[]>('products', []);
+    const updatedProducts = [...allProducts, newProduct];
+    storage.set('products', updatedProducts);
+    
+    addToCart(newProduct);
+    setNewProductForm({ name: '', price: '', quantity: '' });
+  };
+
+  return (
+    <Layout title="Scan Products">
+      <div className="max-w-2xl mx-auto">
+        {showScanner && (
+          <BarcodeScanner 
+            onScan={handleScan} 
+            onClose={() => navigate('/')}
+          />
+        )}
+
+        {status === 'found' && product && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-xl"
+          >
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <CheckCircle2 size={32} />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Product Found!</h2>
+                <p className="text-slate-500 font-medium">Barcode: {scannedBarcode}</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-6 rounded-3xl mb-8 border border-slate-100">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">{product.name}</h3>
+                  <p className="text-slate-500 font-medium">Stock: {product.quantity} {product.unit}</p>
+                </div>
+                <p className="text-3xl font-bold text-emerald-600">₹{product.price}</p>
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button 
+                onClick={() => addToCart(product)}
+                className="flex-1 bg-emerald-600 text-white py-5 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-100 active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <ShoppingCart size={24} />
+                Add to Cart
+              </button>
+              <button 
+                onClick={() => {
+                  setStatus('idle');
+                  setShowScanner(true);
+                }}
+                className="flex-1 bg-slate-100 text-slate-600 py-5 rounded-2xl font-bold text-lg hover:bg-slate-200 transition-all"
+              >
+                Scan Next
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {status === 'new' && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-xl"
+          >
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+                <PlusCircle size={32} />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">New Product</h2>
+                <p className="text-slate-500 font-medium">Barcode {scannedBarcode} not found</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveNewProduct} className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Product Name</label>
+                <input 
+                  required
+                  type="text" 
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg font-medium"
+                  placeholder="e.g. Coca Cola 500ml"
+                  value={newProductForm.name}
+                  onChange={e => setNewProductForm({...newProductForm, name: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Price (₹)</label>
+                  <input 
+                    required
+                    type="number" 
+                    step="0.01"
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg font-medium"
+                    placeholder="0.00"
+                    value={newProductForm.price}
+                    onChange={e => setNewProductForm({...newProductForm, price: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Initial Stock</label>
+                  <input 
+                    required
+                    type="number" 
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg font-medium"
+                    placeholder="0"
+                    value={newProductForm.quantity}
+                    onChange={e => setNewProductForm({...newProductForm, quantity: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button 
+                  type="submit"
+                  className="flex-1 bg-blue-600 text-white py-5 rounded-2xl font-bold text-lg shadow-lg shadow-blue-100 active:scale-95 transition-all"
+                >
+                  Save & Add to Cart
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setStatus('idle');
+                    setShowScanner(true);
+                  }}
+                  className="flex-1 bg-slate-100 text-slate-600 py-5 rounded-2xl font-bold text-lg hover:bg-slate-200 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
       </div>
     </Layout>
   );
@@ -1547,6 +1795,14 @@ const CartPage = () => {
 
   const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
+  const handleProceedToPayment = () => {
+    if (cart.length === 0) {
+      alert("Cart is empty. Please add products before payment.");
+      return;
+    }
+    navigate('/payment');
+  };
+
   if (cart.length === 0) {
     return (
       <Layout title="Your Cart">
@@ -1593,8 +1849,9 @@ const CartPage = () => {
             <span className="text-2xl font-bold text-slate-900">₹{total.toFixed(2)}</span>
           </div>
           <button 
-            onClick={() => navigate('/payment')}
-            className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 active:scale-[0.98] transition-all"
+            onClick={handleProceedToPayment}
+            disabled={cart.length === 0}
+            className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Proceed to Payment
           </button>
@@ -1613,13 +1870,25 @@ const PaymentPage = () => {
   
   const [method, setMethod] = useState<'none' | 'cash' | 'upi'>('none');
 
+  useEffect(() => {
+    if (cart.length === 0) {
+      navigate('/sell');
+    }
+  }, [cart, navigate]);
+
   const completeSale = () => {
+    if (cart.length === 0) {
+      alert("Cart is empty!");
+      navigate('/sell');
+      return;
+    }
+
     // Reduce stock
     const products = storage.get<Product[]>('products', []);
     const updatedProducts = products.map(p => {
       const cartItem = cart.find(item => item.productId === p.id);
       if (cartItem) {
-        return { ...p, quantity: p.quantity - cartItem.quantity };
+        return { ...p, quantity: Math.max(0, p.quantity - cartItem.quantity) };
       }
       return p;
     });
@@ -2569,6 +2838,7 @@ export default function App() {
           <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
           <Route path="/add-upi" element={<ProtectedRoute><AddUpiPage /></ProtectedRoute>} />
           <Route path="/add-products" element={<ProtectedRoute><AddProductsPage /></ProtectedRoute>} />
+          <Route path="/scan-products" element={<ProtectedRoute><ScanProductsPage /></ProtectedRoute>} />
           <Route path="/sell" element={<ProtectedRoute><SellProductsPage /></ProtectedRoute>} />
           <Route path="/cart" element={<ProtectedRoute><CartPage /></ProtectedRoute>} />
           <Route path="/payment" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
